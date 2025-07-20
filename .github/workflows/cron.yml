@@ -2,7 +2,7 @@ name: Notion RSS Import
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # Cada 2 horas
+    - cron: '0 */12 * * *'  # Cada 2 horas
   workflow_dispatch:       # Permite ejecución manual
 
 jobs:
