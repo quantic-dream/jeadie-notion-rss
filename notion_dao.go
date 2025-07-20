@@ -265,7 +265,8 @@ func (dao *NotionDao) CleanUnstarredContentDatabase() error {
 				continue
 			}
 
-			_, err := dao.client.Page.Update(context.Background(), page.ID, &notionapi.PageUpdateRequest{
+			_, err := dao.client.Page.Update(context.Background(), notionapi.PageID(page.ID), &notionapi.PageUpdateRequest{
+
 				Archived:   true,
 				Properties: notionapi.Properties{},
 			})
