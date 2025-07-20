@@ -4,6 +4,11 @@ import (
 	"fmt"
 )
 
+err := CleanDatabase(notionClient, databaseID)
+if err != nil {
+	log.Fatalf("Failed to clean database: %v", err)
+}
+
 func main() {
 
 	nDao, err := ConstructNotionDaoFromEnv()
