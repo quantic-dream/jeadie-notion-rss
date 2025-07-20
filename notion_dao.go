@@ -51,8 +51,6 @@ func ConstructNotionDao(feedDatabaseId string, contentDatabaseId string, integra
 func (dao NotionDao) GetOldUnstarredRSSItems(olderThan time.Time) []notionapi.Page {
 	resp, err := dao.client.Database.Query(context.TODO(), dao.contentDatabaseId, &notionapi.DatabaseQueryRequest{
 		Filter: (notionapi.AndCompoundFilter)([]notionapi.Filter{
-
-			// Use `Created`, not `Published` as to avoid deleting cold-started RSS feeds.
 			notionapi.PropertyFilter{
 				Property: "Created",
 				Date: &notionapi.DateFilterCondition{
@@ -67,9 +65,6 @@ func (dao NotionDao) GetOldUnstarredRSSItems(olderThan time.Time) []notionapi.Pa
 				},
 			},
 		}),
-		// TODO: pagination
-		//StartCursor:    "",
-		//PageSize:       0,
 	})
 	if err != nil {
 		fmt.Printf("error occurred in GetOldUnstarredRSSItems. Error: %s\n", err.Error())
@@ -126,7 +121,6 @@ func (dao *NotionDao) GetEnabledRssFeeds() chan *FeedDatabaseItem {
 			},
 		}
 
-		//TODO: Get multi-page pagination results from resp.HasMore
 		resp, err := dao.client.Database.Query(context.Background(), dao.feedDatabaseId, req)
 		if err != nil {
 			return
@@ -165,7 +159,6 @@ func GetRssFeedFromDatabaseObject(p *notionapi.Page) (*FeedDatabaseItem, error) 
 }
 
 func GetImageUrl(x string) *string {
-	// Extract the first image src from the document to use as cover
 	re := regexp.MustCompile(`(?m)<img\b[^>]+?src\s*=\s*['"]?([^\s'"?#>]+)`)
 	match := re.FindSubmatch([]byte(x))
 	if match != nil {
@@ -180,7 +173,7 @@ func GetImageUrl(x string) *string {
 	return nil
 }
 
-// AddRssItem to Notion database as a single new page with Block content. On failure, no retry is attempted.
+// AddRssItem to Notion database as a single new page with Block content.
 func (dao NotionDao) AddRssItem(item RssItem) error {
 	categories := make([]notionapi.Option, len(item.categories))
 	for i, c := range item.categories {
@@ -188,13 +181,8 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 			Name: c,
 		}
 	}
+
 	var imageProp *notionapi.Image
-	// TODO: Currently notionapi.URLProperty is not nullable, which is needed
-	//   to use thumbnail properly (i.e. handle the case when no image in RSS item).
-	//thumbnailProp := &notionapi.URLProperty{
-	//	Type: "url",
-	//	URL: ,
-	//}
 
 	image := GetImageUrl(strings.Join(item.content, " "))
 	if image != nil {
@@ -224,13 +212,10 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 			"Description": notionapi.RichTextProperty{
 				Type: "rich_text",
 				RichText: []notionapi.RichText{{
-					Type: notionapi.ObjectTypeText,
-					Text: notionapi.Text{
-						Content: *item.description,
-					},
+					Type:      notionapi.ObjectTypeText,
+					Text:      notionapi.Text{Content: *item.description},
 					PlainText: *item.description,
-				},
-				},
+				}},
 			},
 			"Link": notionapi.URLProperty{
 				Type: "url",
@@ -248,16 +233,19 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 	return err
 }
 
+// RssContentToBlocks transforma el contenido RSS en bloques Notion.
 func RssContentToBlocks(item RssItem) []notionapi.Block {
 	// TODO: implement when we know RssItem struct better
 	return []notionapi.Block{}
+}
 
 // CleanUnstarredContentDatabase borra (archiva) todas las páginas que no tienen el checkbox "Guardar" marcado.
 func (dao *NotionDao) CleanUnstarredContentDatabase() error {
 	startCursor := ""
+
 	for {
 		query := &notionapi.DatabaseQueryRequest{
-			PageSize: 100,
+			PageSize:    100,
 			StartCursor: notionapi.Cursor(startCursor),
 		}
 
@@ -267,18 +255,16 @@ func (dao *NotionDao) CleanUnstarredContentDatabase() error {
 		}
 
 		for _, page := range resp.Results {
-			// Obtener valor del checkbox "Guardar"
 			prop, ok := page.Properties["Guardar"]
 			if !ok {
-				continue // si no tiene la propiedad, ignoramos la página
+				continue
 			}
 
 			guardar, ok := prop.(*notionapi.CheckboxProperty)
 			if !ok || guardar.Checkbox {
-				continue // si no es checkbox o está marcado, conservar
+				continue
 			}
 
-			// Archivar (borrar) la página
 			_, err := dao.client.Page.Update(context.Background(), page.ID, &notionapi.PageUpdateRequest{
 				Archived:   true,
 				Properties: notionapi.Properties{},
@@ -297,6 +283,4 @@ func (dao *NotionDao) CleanUnstarredContentDatabase() error {
 	}
 
 	return nil
-}
-	
 }
