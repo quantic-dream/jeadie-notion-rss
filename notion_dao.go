@@ -251,4 +251,52 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 func RssContentToBlocks(item RssItem) []notionapi.Block {
 	// TODO: implement when we know RssItem struct better
 	return []notionapi.Block{}
+
+// CleanUnstarredContentDatabase borra (archiva) todas las páginas que no tienen el checkbox "Guardar" marcado.
+func (dao *NotionDao) CleanUnstarredContentDatabase() error {
+	startCursor := ""
+	for {
+		query := &notionapi.DatabaseQueryRequest{
+			PageSize: 100,
+			StartCursor: notionapi.Cursor(startCursor),
+		}
+
+		resp, err := dao.client.Database.Query(context.Background(), dao.contentDatabaseId, query)
+		if err != nil {
+			return fmt.Errorf("failed to query content database: %w", err)
+		}
+
+		for _, page := range resp.Results {
+			// Obtener valor del checkbox "Guardar"
+			prop, ok := page.Properties["Guardar"]
+			if !ok {
+				continue // si no tiene la propiedad, ignoramos la página
+			}
+
+			guardar, ok := prop.(*notionapi.CheckboxProperty)
+			if !ok || guardar.Checkbox {
+				continue // si no es checkbox o está marcado, conservar
+			}
+
+			// Archivar (borrar) la página
+			_, err := dao.client.Page.Update(context.Background(), page.ID, &notionapi.PageUpdateRequest{
+				Archived:   true,
+				Properties: notionapi.Properties{},
+			})
+			if err != nil {
+				fmt.Printf("Failed to archive page %s: %v\n", page.ID, err)
+			} else {
+				fmt.Printf("Archived page: %s\n", page.ID)
+			}
+		}
+
+		if !resp.HasMore {
+			break
+		}
+		startCursor = string(resp.NextCursor)
+	}
+
+	return nil
+}
+	
 }
