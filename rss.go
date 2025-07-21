@@ -60,15 +60,18 @@ func GetRssContentFrom(feed *FeedDatabaseItem, afterTime time.Time) []*RssItem {
 func ExtractRssContentFeed(f *gofeed.Feed, afterTime time.Time, publishAllItems bool, databaseFeedName string) []*RssItem {
 	result := make([]*RssItem, len(f.Items))
 	count := 0
+
 	for _, item := range f.Items {
-		if publishAllItems || item.PublishedParsed.After(afterTime) {
+		if publishAllItems || item.PublishedParsed == nil || item.PublishedParsed.After(afterTime) {
 			result[count] = convert(item, databaseFeedName)
 			count++
 		}
 	}
+
 	fmt.Printf("Feed %s has %d items. %d are eligible to be uploaded\n", f.Title, len(f.Items), count)
 	return result[:count]
 }
+
 
 // convert gofeed.Item into an internal RSSItem model.
 func convert(item *gofeed.Item, itemFeedName string) *RssItem {
