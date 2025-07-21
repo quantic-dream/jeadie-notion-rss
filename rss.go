@@ -45,17 +45,16 @@ func GetRssContent(feedDatabaseItems chan *FeedDatabaseItem, since time.Time) ch
 
 // GetRssContentFrom since afterTime from the RSS feed found at url.
 func GetRssContentFrom(feed *FeedDatabaseItem, afterTime time.Time) []*RssItem {
-	feedUrl := feed.FeedLink
-	feedContent, err := gofeed.NewParser().ParseURL(feed.FeedLink.String())
-	if err != nil {
-		fmt.Println(fmt.Errorf("could not get content from rss url: %s. Error occurred %w", feedUrl, err).Error())
-		return []*RssItem{}
-	}
+    feedUrl := feed.FeedLink
+    feedContent, err := gofeed.NewParser().ParseURL(feed.FeedLink.String())
+    if err != nil {
+        fmt.Println(fmt.Errorf("could not get content from rss url: %s. Error occurred %w", feedUrl, err).Error())
+        return []*RssItem{}
+    }
 
-	// If Feed entry is new, publish all the content from it.
-	publishAllItems := feed.Created.After(afterTime)
-	return ExtractRssContentFeed(feedContent, afterTime, publishAllItems, feed.Name)
+    return ExtractRssContentFeed(feedContent, afterTime, false, feed.Name)
 }
+
 
 // ExtractRssContentFeed Extract RSS content from an RSS feed
 func ExtractRssContentFeed(f *gofeed.Feed, afterTime time.Time, publishAllItems bool, databaseFeedName string) []*RssItem {
