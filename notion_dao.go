@@ -51,6 +51,8 @@ func ConstructNotionDao(feedDatabaseId string, contentDatabaseId string, integra
 func (dao NotionDao) GetOldUnstarredRSSItems(olderThan time.Time) []notionapi.Page {
 	resp, err := dao.client.Database.Query(context.TODO(), dao.contentDatabaseId, &notionapi.DatabaseQueryRequest{
 		Filter: (notionapi.AndCompoundFilter)([]notionapi.Filter{
+
+			// Use `Created`, not `Published` as to avoid deleting cold-started RSS feeds.
 			notionapi.PropertyFilter{
 				Property: "Created",
 				Date: &notionapi.DateFilterCondition{
@@ -65,6 +67,9 @@ func (dao NotionDao) GetOldUnstarredRSSItems(olderThan time.Time) []notionapi.Pa
 				},
 			},
 		}),
+		// TODO: pagination
+		//StartCursor:    "",
+		//PageSize:       0,
 	})
 	if err != nil {
 		fmt.Printf("error occurred in GetOldUnstarredRSSItems. Error: %s\n", err.Error())
@@ -107,39 +112,34 @@ func (dao *NotionDao) ArchivePages(pageIds []notionapi.PageID) error {
 
 // GetEnabledRssFeeds from the Feed Database. Results filtered on property "Enabled"=true
 func (dao *NotionDao) GetEnabledRssFeeds() chan *FeedDatabaseItem {
-    out := make(chan *FeedDatabaseItem)
-    go func() {
-        defer close(out)
-        startCursor := notionapi.Cursor("")
-        
-        for {
-            req := &notionapi.DatabaseQueryRequest{
-                Filter: notionapi.PropertyFilter{
-                    Property: "Enabled",
-                    Checkbox: &notionapi.CheckboxFilterCondition{ Equals: true },
-                },
-                PageSize:    100,
-                StartCursor: startCursor,
-            }
-            resp, err := dao.client.Database.Query(context.Background(), dao.feedDatabaseId, req)
-            if err != nil {
-                fmt.Printf("error querying feeds: %v\n", err)
-                return
-            }
-            for _, r := range resp.Results {
-                if feed, err2 := GetRssFeedFromDatabaseObject(&r); err2 == nil {
-                    out <- feed
-                }
-            }
-            if !resp.HasMore {
-                break
-            }
-            startCursor = resp.NextCursor
-        }
-    }()
-    return out
-}
+	rssFeeds := make(chan *FeedDatabaseItem)
 
+	go func(dao *NotionDao, output chan *FeedDatabaseItem) {
+		defer close(output)
+
+		req := &notionapi.DatabaseQueryRequest{
+			Filter: notionapi.PropertyFilter{
+				Property: "Enabled",
+				Checkbox: &notionapi.CheckboxFilterCondition{
+					Equals: true,
+				},
+			},
+		}
+
+		//TODO: Get multi-page pagination results from resp.HasMore
+		resp, err := dao.client.Database.Query(context.Background(), dao.feedDatabaseId, req)
+		if err != nil {
+			return
+		}
+		for _, r := range resp.Results {
+			feed, err := GetRssFeedFromDatabaseObject(&r)
+			if err == nil {
+				rssFeeds <- feed
+			}
+		}
+	}(dao, rssFeeds)
+	return rssFeeds
+}
 
 func GetRssFeedFromDatabaseObject(p *notionapi.Page) (*FeedDatabaseItem, error) {
 	if p.Properties["Link"] == nil || p.Properties["Title"] == nil {
@@ -165,6 +165,7 @@ func GetRssFeedFromDatabaseObject(p *notionapi.Page) (*FeedDatabaseItem, error) 
 }
 
 func GetImageUrl(x string) *string {
+	// Extract the first image src from the document to use as cover
 	re := regexp.MustCompile(`(?m)<img\b[^>]+?src\s*=\s*['"]?([^\s'"?#>]+)`)
 	match := re.FindSubmatch([]byte(x))
 	if match != nil {
@@ -179,7 +180,7 @@ func GetImageUrl(x string) *string {
 	return nil
 }
 
-// AddRssItem to Notion database as a single new page with Block content.
+// AddRssItem to Notion database as a single new page with Block content. On failure, no retry is attempted.
 func (dao NotionDao) AddRssItem(item RssItem) error {
 	categories := make([]notionapi.Option, len(item.categories))
 	for i, c := range item.categories {
@@ -187,8 +188,13 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 			Name: c,
 		}
 	}
-
 	var imageProp *notionapi.Image
+	// TODO: Currently notionapi.URLProperty is not nullable, which is needed
+	//   to use thumbnail properly (i.e. handle the case when no image in RSS item).
+	//thumbnailProp := &notionapi.URLProperty{
+	//	Type: "url",
+	//	URL: ,
+	//}
 
 	image := GetImageUrl(strings.Join(item.content, " "))
 	if image != nil {
@@ -218,10 +224,13 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 			"Description": notionapi.RichTextProperty{
 				Type: "rich_text",
 				RichText: []notionapi.RichText{{
-					Type:      notionapi.ObjectTypeText,
-					Text:      notionapi.Text{Content: *item.description},
+					Type: notionapi.ObjectTypeText,
+					Text: notionapi.Text{
+						Content: *item.description,
+					},
 					PlainText: *item.description,
-				}},
+				},
+				},
 			},
 			"Link": notionapi.URLProperty{
 				Type: "url",
@@ -239,55 +248,7 @@ func (dao NotionDao) AddRssItem(item RssItem) error {
 	return err
 }
 
-// RssContentToBlocks transforma el contenido RSS en bloques Notion.
 func RssContentToBlocks(item RssItem) []notionapi.Block {
 	// TODO: implement when we know RssItem struct better
 	return []notionapi.Block{}
-}
-
-// CleanUnstarredContentDatabase borra (archiva) todas las páginas que no tienen el checkbox "Guardar" marcado.
-func (dao *NotionDao) CleanUnstarredContentDatabase() error {
-	startCursor := ""
-
-	for {
-		query := &notionapi.DatabaseQueryRequest{
-			PageSize:    100,
-			StartCursor: notionapi.Cursor(startCursor),
-		}
-
-		resp, err := dao.client.Database.Query(context.Background(), dao.contentDatabaseId, query)
-		if err != nil {
-			return fmt.Errorf("failed to query content database: %w", err)
-		}
-
-		for _, page := range resp.Results {
-			prop, ok := page.Properties["Guardar"]
-			if !ok {
-				continue
-			}
-
-			guardar, ok := prop.(*notionapi.CheckboxProperty)
-			if !ok || guardar.Checkbox {
-				continue
-			}
-
-			_, err := dao.client.Page.Update(context.Background(), notionapi.PageID(page.ID), &notionapi.PageUpdateRequest{
-
-				Archived:   true,
-				Properties: notionapi.Properties{},
-			})
-			if err != nil {
-				fmt.Printf("Failed to archive page %s: %v\n", page.ID, err)
-			} else {
-				fmt.Printf("Archived page: %s\n", page.ID)
-			}
-		}
-
-		if !resp.HasMore {
-			break
-		}
-		startCursor = string(resp.NextCursor)
-	}
-
-	return nil
 }
