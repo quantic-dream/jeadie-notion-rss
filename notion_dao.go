@@ -107,33 +107,39 @@ func (dao *NotionDao) ArchivePages(pageIds []notionapi.PageID) error {
 
 // GetEnabledRssFeeds from the Feed Database. Results filtered on property "Enabled"=true
 func (dao *NotionDao) GetEnabledRssFeeds() chan *FeedDatabaseItem {
-	rssFeeds := make(chan *FeedDatabaseItem)
-
-	go func(dao *NotionDao, output chan *FeedDatabaseItem) {
-		defer close(output)
-
-		req := &notionapi.DatabaseQueryRequest{
-			Filter: notionapi.PropertyFilter{
-				Property: "Enabled",
-				Checkbox: &notionapi.CheckboxFilterCondition{
-					Equals: true,
-				},
-			},
-		}
-
-		resp, err := dao.client.Database.Query(context.Background(), dao.feedDatabaseId, req)
-		if err != nil {
-			return
-		}
-		for _, r := range resp.Results {
-			feed, err := GetRssFeedFromDatabaseObject(&r)
-			if err == nil {
-				rssFeeds <- feed
-			}
-		}
-	}(dao, rssFeeds)
-	return rssFeeds
+    out := make(chan *FeedDatabaseItem)
+    go func() {
+        defer close(out)
+        startCursor := notionapi.Cursor("")
+        
+        for {
+            req := &notionapi.DatabaseQueryRequest{
+                Filter: notionapi.PropertyFilter{
+                    Property: "Enabled",
+                    Checkbox: &notionapi.CheckboxFilterCondition{ Equals: true },
+                },
+                PageSize:    100,
+                StartCursor: startCursor,
+            }
+            resp, err := dao.client.Database.Query(context.Background(), dao.feedDatabaseId, req)
+            if err != nil {
+                fmt.Printf("error querying feeds: %v\n", err)
+                return
+            }
+            for _, r := range resp.Results {
+                if feed, err2 := GetRssFeedFromDatabaseObject(&r); err2 == nil {
+                    out <- feed
+                }
+            }
+            if !resp.HasMore {
+                break
+            }
+            startCursor = resp.NextCursor
+        }
+    }()
+    return out
 }
+
 
 func GetRssFeedFromDatabaseObject(p *notionapi.Page) (*FeedDatabaseItem, error) {
 	if p.Properties["Link"] == nil || p.Properties["Title"] == nil {
